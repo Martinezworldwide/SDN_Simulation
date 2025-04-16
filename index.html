@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SDN Application Simulation</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      background-color: #0c0c0c;
+      color: #ffffff;
+    }
+    header {
+      background: #1a1a1a;
+      padding: 1em;
+      text-align: center;
+      font-size: 1.4em;
+    }
+    main {
+      display: flex;
+    }
+    #canvas {
+      flex: 3;
+      height: 80vh;
+      background: #1e1e1e;
+      position: relative;
+    }
+    .node {
+      width: 90px;
+      height: 90px;
+      border-radius: 50%;
+      background: #333;
+      position: absolute;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      border: 2px solid #666;
+    }
+    .node.controller { background: #007acc; }
+    .node.switch { background: #444; }
+    .node.device { background: #777; }
+    .node.active { background-color: #4caf50 !important; }
+    .link {
+      position: absolute;
+      height: 2px;
+      background: #888;
+      transform-origin: 0 0;
+    }
+    #controls {
+      flex: 1;
+      background: #121212;
+      padding: 1em;
+    }
+    #log, #flowTables, #trafficStats {
+      background: #000;
+      color: lime;
+      font-size: 0.85em;
+      border: 1px solid #444;
+      padding: 0.5em;
+      margin-top: 1em;
+    }
+    #log { height: 120px; overflow-y: scroll; }
+    button {
+      margin-top: 10px;
+      padding: 10px;
+      background: #007acc;
+      color: white;
+      border: none;
+      width: 100%;
+      cursor: pointer;
+    }
+    button:hover { background: #005a9e; }
+  </style>
+</head>
+<body>
+  <header>SDN Application Simulation</header>
+  <main>
+    <div id="canvas">
+      <div class="node controller" id="ctrl" style="left: 45%; top: 5%;">Controller</div>
+      <div class="node switch" id="s1" style="left: 20%; top: 35%;">Switch 1</div>
+      <div class="node switch" id="s2" style="left: 70%; top: 35%;">Switch 2</div>
+      <div class="node device" id="d1" style="left: 10%; top: 70%;">Device A</div>
+      <div class="node device" id="d2" style="left: 80%; top: 70%;">Device B</div>
+      <div class="link" id="l1"></div>
+      <div class="link" id="l2"></div>
+      <div class="link" id="l3"></div>
+      <div class="link" id="l4"></div>
+    </div>
+    <div id="controls">
+      <h3>Control Panel</h3>
+      <button onclick="sendTraffic('d1')">Send Packet to Device A</button>
+      <button onclick="sendTraffic('d2')">Send Packet to Device B</button>
+      <button onclick="simulateLinkFailure('l2')">Simulate Link Failure to S2</button>
+      <button onclick="rerouteToDeviceB()">Force Reroute to Device B</button>
+      <h4>Flow Tables</h4>
+      <div id="flowTables"></div>
+      <h4>Traffic Stats</h4>
+      <div id="trafficStats"></div>
+      <h4>Event Log</h4>
+      <div id="log"></div>
+    </div>
+  </main>
+
+  <script>
+    const links = [
+      { id: 'l1', from: 'ctrl', to: 's1' },
+      { id: 'l2', from: 'ctrl', to: 's2' },
+      { id: 'l3', from: 's1', to: 'd1' },
+      { id: 'l4', from: 's2', to: 'd2' },
+    ];
+
+    const flowTables = {
+      s1: [],
+      s2: []
+    };
+
+    const trafficStats = {
+      d1: 0,
+      d2: 0
+    };
+
+    const linkStates = { l1: true, l2: true, l3: true, l4: true };
+
+    function drawLinks() {
+      links.forEach(link => {
+        const from = document.getElementById(link.from).getBoundingClientRect();
+        const to = document.getElementById(link.to).getBoundingClientRect();
+        const x1 = from.left + from.width / 2;
+        const y1 = from.top + from.height / 2;
+        const x2 = to.left + to.width / 2;
+        const y2 = to.top + to.height / 2;
+        const length = Math.hypot(x2 - x1, y2 - y1);
+        const angle = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+        const element = document.getElementById(link.id);
+        element.style.width = `${length}px`;
+        element.style.left = `${x1}px`;
+        element.style.top = `${y1}px`;
+        element.style.transform = `rotate(${angle}deg)`;
+        element.style.background = linkStates[link.id] ? '#888' : 'red';
+      });
+    }
+
+    function sendTraffic(destinationId) {
+      let path = [];
+      if (destinationId === 'd1' && linkStates.l1 && linkStates.l3) {
+        path = ['ctrl', 's1', 'd1'];
+        flowTables.s1.push(`dst: d1 → out: d1`);
+        trafficStats.d1++;
+      } else if (destinationId === 'd2' && linkStates.l2 && linkStates.l4) {
+        path = ['ctrl', 's2', 'd2'];
+        flowTables.s2.push(`dst: d2 → out: d2`);
+        trafficStats.d2++;
+      } else {
+        log(`⚠️ No available path to ${destinationId.toUpperCase()}`);
+        return;
+      }
+      updateFlowTables();
+      updateTrafficStats();
+      activatePath(path);
+    }
+
+    function simulateLinkFailure(linkId) {
+      linkStates[linkId] = false;
+      log(`🔌 Link ${linkId} failed.`);
+      drawLinks();
+    }
+
+    function rerouteToDeviceB() {
+      if (linkStates.l1 && linkStates.l4) {
+        activatePath(['ctrl', 's1', 'd2']);
+        flowTables.s1.push(`dst: d2 → out: s2`);
+        trafficStats.d2++;
+        updateFlowTables();
+        updateTrafficStats();
+        log('🔁 Traffic rerouted via Switch 1 to Device B');
+      } else {
+        log('❌ Cannot reroute to Device B');
+      }
+    }
+
+    function activatePath(path) {
+      path.forEach((node, index) => {
+        setTimeout(() => {
+          const el = document.getElementById(node);
+          el.classList.add('active');
+          log(`✅ ${node} activated`);
+        }, index * 600);
+        setTimeout(() => {
+          document.getElementById(node).classList.remove('active');
+        }, (index + 1) * 600);
+      });
+    }
+
+    function updateFlowTables() {
+      const out = `Switch 1:\n${flowTables.s1.join('\n') || 'No rules'}\n\nSwitch 2:\n${flowTables.s2.join('\n') || 'No rules'}`;
+      document.getElementById('flowTables').innerText = out;
+    }
+
+    function updateTrafficStats() {
+      const stats = `Device A: ${trafficStats.d1} packets\nDevice B: ${trafficStats.d2} packets`;
+      document.getElementById('trafficStats').innerText = stats;
+    }
+
+    function log(message) {
+      const logEl = document.getElementById('log');
+      logEl.innerHTML += `> ${message}<br>`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    window.onload = () => {
+      drawLinks();
+      window.onresize = drawLinks;
+      updateFlowTables();
+      updateTrafficStats();
+    };
+  </script>
+</body>
+</html>
